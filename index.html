@@ -6,23 +6,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <style>
-:root {
+:root{
   --main:#6366f1;
   --bg:#f4f7ff;
   --card:#ffffff;
-  --text:#1e293b;
 }
 body{
   margin:0;
   background:linear-gradient(135deg,#eef2ff,#f8fafc);
   font-family:system-ui,sans-serif;
-  color:var(--text);
 }
 header{
-  padding:16px 22px;
+  padding:16px;
   font-size:20px;
   font-weight:800;
-  background:var(--card);
+  background:#fff;
   box-shadow:0 6px 20px rgba(0,0,0,.08);
 }
 .wrap{
@@ -31,15 +29,12 @@ header{
   padding:16px;
 }
 .card{
-  background:var(--card);
+  background:#fff;
   border-radius:18px;
   padding:16px;
   box-shadow:0 10px 40px rgba(0,0,0,.1);
 }
-.row{
-  display:flex;
-  gap:10px;
-}
+.row{display:flex;gap:10px}
 input{
   flex:1;
   padding:14px;
@@ -52,25 +47,9 @@ button{
   font-size:16px;
   border-radius:12px;
   border:none;
-  cursor:pointer;
   background:var(--main);
   color:#fff;
-}
-button.sub{
-  background:#e0e7ff;
-  color:#3730a3;
-}
-.history{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  margin-top:12px;
-}
-.loading{
-  margin-top:10px;
-  font-weight:700;
-  color:var(--main);
-  display:none;
+  cursor:pointer;
 }
 iframe{
   width:100%;
@@ -78,13 +57,32 @@ iframe{
   border:none;
   border-radius:16px;
   margin-top:14px;
-  background:#fff;
+}
+
+/* アラート */
+.alert{
+  position:fixed;
+  top:20px;
+  left:50%;
+  transform:translateX(-50%) translateY(-20px);
+  background:#ef4444;
+  color:#fff;
+  padding:14px 20px;
+  border-radius:14px;
+  box-shadow:0 10px 30px rgba(0,0,0,.3);
+  opacity:0;
+  pointer-events:none;
+  transition:.4s ease;
+}
+.alert.show{
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
 }
 </style>
 </head>
 
 <body>
-<header>🧙‍♂️ 仙人Proxy</header>
+<header>仙人Proxy</header>
 
 <div class="wrap">
   <div class="card">
@@ -92,47 +90,37 @@ iframe{
       <input id="url" placeholder="https://example.com">
       <button onclick="openProxy()">開く</button>
     </div>
-
-    <div class="loading" id="loading">読み込み中…</div>
-    <div class="history" id="history"></div>
     <iframe id="view"></iframe>
   </div>
 </div>
 
+<div class="alert" id="alert">サイトを開けませんでした</div>
+
 <script>
 const iframe = document.getElementById("view");
-const loading = document.getElementById("loading");
-const historyBox = document.getElementById("history");
+const alertBox = document.getElementById("alert");
+let timer;
 
-function openProxy(u){
-  const url = u || document.getElementById("url").value.trim();
-  if(!url) return alert("URLを入力してね");
+function showAlert(text){
+  alertBox.textContent = text;
+  alertBox.classList.add("show");
+  setTimeout(()=>alertBox.classList.remove("show"),3000);
+}
 
-  save(url);
-  loading.style.display="block";
+function openProxy(){
+  const url=document.getElementById("url").value.trim();
+  if(!url) return showAlert("URLを入力してね");
+
   iframe.src="/proxy?url="+encodeURIComponent(url);
-  iframe.onload=()=>loading.style.display="none";
+
+  clearTimeout(timer);
+  timer=setTimeout(()=>{
+    showAlert("読み込みに失敗しました（制限の可能性）");
+  },8000);
 }
 
-function save(url){
-  let list=JSON.parse(localStorage.getItem("sennin_history")||"[]");
-  list=[url,...list.filter(x=>x!==url)].slice(0,6);
-  localStorage.setItem("sennin_history",JSON.stringify(list));
-  draw();
-}
-
-function draw(){
-  historyBox.innerHTML="";
-  const list=JSON.parse(localStorage.getItem("sennin_history")||"[]");
-  list.forEach(u=>{
-    const b=document.createElement("button");
-    b.className="sub";
-    b.textContent=u;
-    b.onclick=()=>openProxy(u);
-    historyBox.appendChild(b);
-  });
-}
-draw();
+iframe.onload=()=>clearTimeout(timer);
+iframe.onerror=()=>showAlert("このサイトは表示できません");
 </script>
 </body>
 </html>
