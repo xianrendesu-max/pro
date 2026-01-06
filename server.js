@@ -1,48 +1,55 @@
 import express from "express";
-import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
 
+/* ===============================
+   __dirname for ESModules
+================================ */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/* ===============================
+   App
+================================ */
 const app = express();
 const PORT = process.env.PORT || 3000;
+const PREFIX = "/service/";
 
 /* ===============================
    Helpers
 ================================ */
 
-function rewriteHTML(html, prefix, baseUrl) {
+// HTML rewrite
+function rewriteHTML(html, baseUrl) {
   return html
     // href / src / action
     .replace(
       /(href|src|action)=["']([^"']+)["']/gi,
-      (m, attr, url) => {
+      (match, attr, url) => {
         if (
           url.startsWith("data:") ||
           url.startsWith("javascript:") ||
-          url.startsWith(prefix)
+          url.startsWith(PREFIX)
         ) {
-          return m;
+          return match;
         }
         try {
           const abs = new URL(url, baseUrl).href;
-          return `${attr}="${prefix}${abs}"`;
+          return `${attr}="${PREFIX}${abs}"`;
         } catch {
-          return m;
+          return match;
         }
       }
     )
     // srcset
-    .replace(/srcset=["']([^"']+)["']/gi, (m, val) => {
-      const rewritten = val
+    .replace(/srcset=["']([^"']+)["']/gi, (match, value) => {
+      const rewritten = value
         .split(",")
         .map(part => {
           const [u, size] = part.trim().split(" ");
           try {
             const abs = new URL(u, baseUrl).href;
-            return `${prefix}${abs}${size ? " " + size : ""}`;
+            return `${PREFIX}${abs}${size ? " " + size : ""}`;
           } catch {
             return part;
           }
@@ -52,11 +59,11 @@ function rewriteHTML(html, prefix, baseUrl) {
     });
 }
 
-function rewriteJS(js, prefix) {
-  // 最低限：fetch / xhr / import
+// JS rewrite（最低限）
+function rewriteJS(js) {
   return js.replace(
-    /(fetch|open|import)\s*\(\s*["'](https?:\/\/[^"']+)["']/g,
-    (m, fn, url) => `${fn}("${prefix}${url}"`
+    /(fetch|import)\s*\(\s*["'](https?:\/\/[^"']+)["']/g,
+    (m, fn, url) => `${fn}("${PREFIX}${url}"`
   );
 }
 
@@ -68,73 +75,81 @@ app.use(express.static(path.join(__dirname, "public")));
 /* ===============================
    Proxy + Rewrite
 ================================ */
-app.use("/service/", async (req, res) => {
+app.use(PREFIX, async (req, res) => {
   try {
     const targetUrl = decodeURIComponent(
-      req.originalUrl.replace(/^\/service\//, "")
+      req.originalUrl.slice(PREFIX.length)
     );
 
     if (!/^https?:\/\//i.test(targetUrl)) {
-      return res.status(400).send("Invalid URL");
+      res.status(400).send("Invalid target URL");
+      return;
     }
 
+    /* ----- request headers ----- */
+    const headers = { ...req.headers };
+    delete headers.host;
+    delete headers.origin;
+    delete headers.referer;
+    delete headers["accept-encoding"]; // 圧縮防止（rewrite用）
+
+    /* ----- fetch (Node18 built-in) ----- */
     const response = await fetch(targetUrl, {
       method: req.method,
-      headers: {
-        ...req.headers,
-        host: undefined,
-        origin: undefined,
-        referer: undefined
-      },
+      headers,
       redirect: "manual"
     });
 
     const contentType = response.headers.get("content-type") || "";
     let body = Buffer.from(await response.arrayBuffer());
 
-    /* ===== HTML ===== */
+    /* ----- HTML rewrite ----- */
     if (contentType.includes("text/html")) {
       const text = body.toString("utf8");
-      body = Buffer.from(
-        rewriteHTML(text, "/service/", targetUrl),
-        "utf8"
-      );
+      body = Buffer.from(rewriteHTML(text, targetUrl), "utf8");
     }
 
-    /* ===== JS ===== */
-    if (contentType.includes("javascript")) {
+    /* ----- JS rewrite ----- */
+    if (
+      contentType.includes("javascript") ||
+      contentType.includes("ecmascript")
+    ) {
       const text = body.toString("utf8");
-      body = Buffer.from(rewriteJS(text, "/service/"), "utf8");
+      body = Buffer.from(rewriteJS(text), "utf8");
     }
 
-    /* ===== headers ===== */
+    /* ----- response headers ----- */
     res.status(response.status);
-    response.headers.forEach((v, k) => {
+    response.headers.forEach((value, key) => {
+      const k = key.toLowerCase();
       if (
-        ![
-          "content-security-policy",
-          "x-frame-options",
-          "content-length"
-        ].includes(k.toLowerCase())
+        k === "content-security-policy" ||
+        k === "x-frame-options" ||
+        k === "frame-options" ||
+        k === "content-length"
       ) {
-        res.setHeader(k, v);
+        return;
       }
+      res.setHeader(key, value);
     });
 
     res.send(body);
-  } catch (e) {
-    console.error(e);
+  } catch (err) {
+    console.error("Proxy error:", err);
     res.status(500).send("Proxy error");
   }
 });
 
 /* ===============================
-   Fallback
+   SPA fallback
 ================================ */
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+/* ===============================
+   Start server
+================================ */
 app.listen(PORT, () => {
-  console.log("Proxy with rewrite running on", PORT);
+  console.log("Proxy with HTML/JS rewrite running on port", PORT);
 });
